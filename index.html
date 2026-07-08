@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>天气预报查询</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft Yahei", sans-serif;
+        }
+        body {
+            background: linear-gradient(135deg, #74b9ff, #0984e3);
+            min-height: 100vh;
+            padding: 2rem 1rem;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            color: #fff;
+            margin-bottom: 2rem;
+        }
+        .search-box {
+            display: flex;
+            gap: 0.8rem;
+            justify-content: center;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+        #cityInput {
+            width: min(400px, 70%);
+            padding: 0.8rem 1rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+        }
+        button {
+            padding: 0.8rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            background: #0652DD;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #0340b0;
+        }
+        .location-btn {
+            background: #00cec9;
+        }
+        .location-btn:hover {
+            background: #01a8a0;
+        }
+        .weather-card {
+            background: rgba(255,255,255,0.95);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+            margin-bottom: 2rem;
+        }
+        .real-time {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .real-time h2 {
+            font-size: 2.2rem;
+            color: #2d3436;
+            margin-bottom: 0.5rem;
+        }
+        .temp {
+            font-size: 4rem;
+            font-weight: bold;
+            color: #0984e3;
+            margin: 1rem 0;
+        }
+        .forecast-wrap {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+        .day-card {
+            background: #f1f5f9;
+            padding: 1rem;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .tip {
+            color: #ff4444;
+            text-align: center;
+            margin: 1rem 0;
+            font-size: 18px;
+        }
+        .history {
+            margin-top: 1rem;
+            color: white;
+        }
+        .history span {
+            background: rgba(0,0,0,0.2);
+            padding: 4px 10px;
+            border-radius: 6px;
+            margin: 0 4px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>天气预报查询</h1>
+        </header>
+        <section class="search-box">
+            <input type="text" id="cityInput" placeholder="请输入地级市，如：佛山、广州">
+            <button id="searchBtn">查询天气</button>
+            <button class="location-btn" id="locBtn">定位当前城市</button>
+        </section>
+        <div class="tip" id="tip"></div>
+        <div class="history" id="historyBox"></div>
+        <main id="weatherBox"></main>
+    </div>
+
+    <script>
+        const cityInput = document.getElementById("cityInput");
+        const searchBtn = document.getElementById("searchBtn");
+        const locBtn = document.getElementById("locBtn");
+        const weatherBox = document.getElementById("weatherBox");
+        const tip = document.getElementById("tip");
+        const historyBox = document.getElementById("historyBox");
+
+        // 本地存储历史城市
+        let historyCities = JSON.parse(localStorage.getItem("cityHistory")) || [];
+        renderHistory();
+
+        // 回车查询
+        cityInput.addEventListener("keydown", e => {
+            if(e.key === "Enter") searchWeather();
+        })
+        searchBtn.addEventListener("click", searchWeather);
+        locBtn.addEventListener("click", getLocationWeather);
+
+        // 城市名称转经纬度（简易映射，国内主要城市）
+        const cityCoordMap = {
+            "北京": {lat:39.9042, lon:116.4074},
+            "上海": {lat:31.2304, lon:121.4737},
+            "广州": {lat:23.1291, lon:113.2644},
+            "佛山": {lat:23.0217, lon:113.1214},
+            "深圳": {lat:22.5431, lon:114.0579},
+            "成都": {lat:30.5728, lon:104.0668},
+            "杭州": {lat:30.2741, lon:120.1551}
+        };
+
+        // 主查询函数
+        async function searchWeather() {
+            const city = cityInput.value.trim();
+            tip.innerText = "";
+            weatherBox.innerHTML = "";
+            if(!city) {
+                tip.innerText = "请输入城市名称！";
+                return;
+            }
+            const coord = cityCoordMap[city];
+            if(!coord) {
+                tip.innerText = "暂不支持该城市，请输入：北京/上海/广州/佛山/深圳/成都/杭州";
+                return;
+            }
+            try {
+                // Open-Meteo接口，自带CORS跨域，无需KEY
+                const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${coord.lat}&longitude=${coord.lon}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto`);
+                if(!res.ok) throw new Error("天气接口请求失败");
+                const data = await res.json();
+                saveHistory(city);
+                renderWeather(city, data.current, data.daily);
+            } catch(err) {
+                tip.innerText = err.message;
+            }
+        }
+
+        // 渲染页面
+        function renderWeather(city, real, dayList) {
+            const weatherTextMap = {
+                0:"晴朗",1:"大部晴朗",2:"多云",3:"阴天",
+                45:"雾",51:"小雨",61:"中雨",71:"小雪",80:"阵雨",95:"雷暴"
+            };
+            const nowWeather = weatherTextMap[real.weather_code] || "未知天气";
+            let html = `
+                <div class="weather-card">
+                    <div class="real-time">
+                        <h2>${city}</h2>
+                        <p>天气状况：${nowWeather}</p>
+                        <div class="temp">${real.temperature_2m} ℃</div>
+                        <p>实时温度</p>
+                    </div>
+                    <h3>未来3天预报</h3>
+                    <div class="forecast-wrap">
+            `
+            // 只取前3天数据
+            for(let i=0;i<3;i++) {
+                const day = {
+                    date: dayList.time[i],
+                    max: dayList.temperature_2m_max[i],
+                    min: dayList.temperature_2m_min[i],
+                    code: dayList.weather_code[i]
+                }
+                const dayWeather = weatherTextMap[day.code] || "未知天气";
+                html += `
+                    <div class="day-card">
+                        <h4>${day.date}</h4>
+                        <p>天气：${dayWeather}</p>
+                        <p>最高温：${day.max}℃</p>
+                        <p>最低温：${day.min}℃</p>
+                    </div>
+                `
+            }
+            html += `</div></div>`
+            weatherBox.innerHTML = html;
+        }
+
+        // 定位获取天气
+        function getLocationWeather() {
+            tip.innerText = "";
+            if(!navigator.geolocation) {
+                tip.innerText = "浏览器不支持定位";
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(async pos => {
+                const lat = pos.coords.latitude;
+                const lon = pos.coords.longitude;
+                try {
+                    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto`);
+                    const data = await res.json();
+                    renderWeather("当前定位城市", data.current, data.daily);
+                } catch(err) {
+                    tip.innerText = "定位天气加载失败，请手动输入城市";
+                }
+            }, ()=>{
+                tip.innerText = "定位权限被拒绝";
+            })
+        }
+
+        // 本地存储历史城市
+        function saveHistory(city) {
+            historyCities = historyCities.filter(item => item !== city);
+            historyCities.unshift(city);
+            if(historyCities.length > 5) historyCities.pop();
+            localStorage.setItem("cityHistory", JSON.stringify(historyCities));
+            renderHistory();
+        }
+        function renderHistory() {
+            if(historyCities.length === 0) {
+                historyBox.innerHTML = "";
+                return;
+            }
+            let str = "最近搜索：";
+            historyCities.forEach(city => str += `<span>${city}</span>`);
+            historyBox.innerHTML = str;
+            document.querySelectorAll(".history span").forEach(span => {
+                span.onclick = () => {
+                    cityInput.value = span.innerText;
+                    searchWeather();
+                }
+            })
+        }
+        // 页面加载自动读取上次城市
+        window.onload = () => {
+            if(historyCities.length > 0) {
+                cityInput.value = historyCities[0];
+                searchWeather();
+            }
+        }
+    </script>
+</body>
+</html>
